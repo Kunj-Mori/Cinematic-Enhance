@@ -6,7 +6,6 @@ import tempfile
 import os
 import shutil
 import time
-from threading import Thread
 
 class CinematicFilter:
     def __init__(self):
@@ -184,52 +183,11 @@ def process_video(uploaded_file, filter):
         except Exception as e:
             st.warning(f"Note: Temporary files will be cleaned up later.")
 
-def process_webcam(filter):
-    # Initialize webcam
-    cap = cv2.VideoCapture(0)
-    
-    # Check if webcam is opened successfully
-    if not cap.isOpened():
-        st.error("Unable to access webcam. Please check your camera connection.")
-        return
-
-    # Create placeholder for the webcam feed
-    frame_placeholder = st.empty()
-    stop_button = st.button('Stop Webcam', key='stop_webcam_process')
-    
-    try:
-        while cap.isOpened() and not stop_button:
-            ret, frame = cap.read()
-            if not ret:
-                st.error("Failed to grab frame from webcam")
-                break
-            
-            # Apply filter to frame
-            processed_frame = filter.apply(frame)
-            
-            # Convert BGR to RGB for display
-            display_frame = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
-            
-            # Display the frame
-            frame_placeholder.image(display_frame, channels="RGB", use_column_width=True)
-            
-            # Small delay to reduce CPU usage
-            time.sleep(0.033)  # Approximately 30 FPS
-            
-    except Exception as e:
-        st.error(f"Error during webcam processing: {str(e)}")
-    finally:
-        cap.release()
-
 def main():
     st.set_page_config(page_title="Cinematic Image Filter", layout="wide")
     
     st.title("🎬 Cinematic Image Filter")
     st.write("Transform your images and videos with a cinematic look!")
-
-    # Initialize session state for webcam
-    if 'webcam_running' not in st.session_state:
-        st.session_state.webcam_running = False
 
     # Initialize filter
     filter = CinematicFilter()
@@ -326,24 +284,41 @@ def main():
                 st.error(f"An error occurred while processing the video: {str(e)}")
 
     elif mode == "Webcam":
-        st.write("Note: Webcam mode requires camera access.")
-        col1, col2 = st.columns(2)
+        st.write("📷 Use your device camera to capture an image.")
         
-        with col1:
-            if not st.session_state.webcam_running:
-                if st.button("Start Webcam", key='start_webcam_button'):
-                    st.session_state.webcam_running = True
-                    st.rerun()
-        
-        with col2:
-            if st.session_state.webcam_running:
-                if st.button("Stop Webcam", key='stop_webcam_button'):
-                    st.session_state.webcam_running = False
-                    st.rerun()
+        camera_file = st.camera_input("Take a picture")
 
-        # Run webcam if it's active
-        if st.session_state.webcam_running:
-            process_webcam(filter)
+        if camera_file is not None:
+            # Load image with PIL from bytes
+            image = Image.open(camera_file)
+
+            # Convert PIL to numpy array in BGR format (OpenCV)
+            image_np = np.array(image.convert("RGB"))
+            image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+
+            # Apply cinematic filter
+            result = filter.apply(image_bgr)
+
+            # Convert back to RGB for display
+            result_rgb = cv2.cvtColor(result, cv2.COLOR_BGR2RGB)
+
+            # Show original and filtered images side by side
+            col1, col2 = st.columns(2)
+            with col1:
+                st.header("Original Image")
+                st.image(image)
+            with col2:
+                st.header("Cinematic Filter Applied")
+                st.image(result_rgb)
+
+            # Download option
+            processed_img = cv2.imencode('.jpg', result)[1].tobytes()
+            st.download_button(
+                label="Download Filtered Image",
+                data=processed_img,
+                file_name="cinematic_image.jpg",
+                mime="image/jpeg"
+            )
 
 if __name__ == "__main__":
-    main() 
+    main()
