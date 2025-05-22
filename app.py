@@ -6,6 +6,8 @@ import tempfile
 import os
 import shutil
 import time
+import threading
+import queue
 
 
 class CinematicFilter:
@@ -165,24 +167,111 @@ def process_video(uploaded_file, filter):
             pass
 
 
-def find_working_camera(max_index=5):
+def find_working_camera(max_index=10):
     """
     Try to find a working camera index by checking up to max_index.
     Returns index if found, else None.
     """
-    for idx in range(max_index):
-        # Use CAP_DSHOW on Windows for less warning; on Linux default is fine
-        if os.name == 'nt':
-            cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
-        else:
-            cap = cv2.VideoCapture(idx)
+    working_cameras = []
+    
+    # Try different backends and indices
+    backends = [cv2.CAP_ANY]
+    if os.name == 'nt':  # Windows
+        backends = [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]
+    else:  # Linux/Mac
+        backends = [cv2.CAP_V4L2, cv2.CAP_ANY]
+    
+    for backend in backends:
+        for idx in range(max_index):
+            try:
+                cap = cv2.VideoCapture(idx, backend)
+                if cap is not None and cap.isOpened():
+                    # Test if we can actually read a frame
+                    ret, frame = cap.read()
+                    if ret and frame is not None:
+                        working_cameras.append((idx, backend))
+                        cap.release()
+                        return idx, backend
+                cap.release()
+            except Exception:
+                continue
+    
+    return None, None
 
-        if cap is not None and cap.isOpened():
-            cap.release()
-            return idx
-        if cap is not None:
-            cap.release()
-    return None
+
+def initialize_camera(camera_index, backend):
+    """Initialize camera with proper error handling"""
+    try:
+        cap = cv2.VideoCapture(camera_index, backend)
+        if not cap.isOpened():
+            return None
+        
+        # Set camera properties for better performance
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FPS, 30)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        
+        return cap
+    except Exception as e:
+        st.error(f"Failed to initialize camera: {e}")
+        return None
+
+
+class CameraStream:
+    def __init__(self, camera_index, backend):
+        self.camera_index = camera_index
+        self.backend = backend
+        self.cap = None
+        self.frame_queue = queue.Queue(maxsize=2)
+        self.running = False
+        self.thread = None
+    
+    def start(self):
+        if self.running:
+            return False
+        
+        self.cap = initialize_camera(self.camera_index, self.backend)
+        if self.cap is None:
+            return False
+        
+        self.running = True
+        self.thread = threading.Thread(target=self._capture_frames)
+        self.thread.daemon = True
+        self.thread.start()
+        return True
+    
+    def _capture_frames(self):
+        while self.running:
+            if self.cap is not None:
+                ret, frame = self.cap.read()
+                if ret:
+                    # Keep only the latest frame
+                    if not self.frame_queue.empty():
+                        try:
+                            self.frame_queue.get_nowait()
+                        except queue.Empty:
+                            pass
+                    
+                    try:
+                        self.frame_queue.put_nowait(frame)
+                    except queue.Full:
+                        pass
+            time.sleep(0.01)
+    
+    def get_frame(self):
+        try:
+            return self.frame_queue.get_nowait()
+        except queue.Empty:
+            return None
+    
+    def stop(self):
+        self.running = False
+        if self.thread is not None:
+            self.thread.join(timeout=1)
+        if self.cap is not None:
+            self.cap.release()
+        self.cap = None
 
 
 def main():
@@ -269,69 +358,111 @@ def main():
     elif mode == "Webcam":
         st.write("📷 Use your device camera.")
 
-        live_filter = st.checkbox("Start Live Cinematic Filter", key="live_filter_checkbox")
+        # Initialize session state for camera stream
+        if 'camera_stream' not in st.session_state:
+            st.session_state.camera_stream = None
+        if 'camera_active' not in st.session_state:
+            st.session_state.camera_active = False
 
-        if live_filter:
-            FRAME_WINDOW = st.image([])
+        # Find available camera
+        if st.button("🔍 Detect Camera", key="detect_camera"):
+            with st.spinner("Searching for cameras..."):
+                cam_idx, backend = find_working_camera()
+                
+                if cam_idx is not None:
+                    st.success(f"✅ Camera found at index {cam_idx}")
+                    st.session_state.camera_index = cam_idx
+                    st.session_state.camera_backend = backend
+                else:
+                    st.error("❌ No accessible camera found. Please check:")
+                    st.write("- Camera is connected properly")
+                    st.write("- Camera is not being used by another application")
+                    st.write("- Camera permissions are granted")
 
-            cam_idx = find_working_camera()
+        # Camera controls
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("▶️ Start Live Filter", key="start_camera") and hasattr(st.session_state, 'camera_index'):
+                if st.session_state.camera_stream is None:
+                    st.session_state.camera_stream = CameraStream(
+                        st.session_state.camera_index, 
+                        st.session_state.camera_backend
+                    )
+                
+                if st.session_state.camera_stream.start():
+                    st.session_state.camera_active = True
+                    st.rerun()
+                else:
+                    st.error("Failed to start camera")
+        
+        with col2:
+            if st.button("⏹️ Stop Camera", key="stop_camera"):
+                if st.session_state.camera_stream is not None:
+                    st.session_state.camera_stream.stop()
+                    st.session_state.camera_stream = None
+                st.session_state.camera_active = False
+                st.rerun()
 
-            if cam_idx is None:
-                st.error("⚠️ No accessible webcam found. Please connect a camera or close other apps using the webcam.")
-                return
-
-            # Open capture with the found index
-            if os.name == 'nt':
-                cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
-            else:
-                cap = cv2.VideoCapture(cam_idx)
-
-            try:
-                while live_filter:
-                    ret, frame = cap.read()
-                    if not ret:
-                        st.error("⚠️ Failed to grab frame from webcam.")
+        # Live camera feed
+        if st.session_state.camera_active and st.session_state.camera_stream is not None:
+            FRAME_WINDOW = st.empty()
+            
+            # Display live feed for a few seconds then auto-refresh
+            start_time = time.time()
+            frame_count = 0
+            
+            while st.session_state.camera_active and time.time() - start_time < 5:
+                frame = st.session_state.camera_stream.get_frame()
+                
+                if frame is not None:
+                    try:
+                        filtered_frame = filter.apply(frame)
+                        FRAME_WINDOW.image(
+                            cv2.cvtColor(filtered_frame, cv2.COLOR_BGR2RGB),
+                            caption="Live Cinematic Filter"
+                        )
+                        frame_count += 1
+                    except Exception as e:
+                        st.error(f"Error processing frame: {e}")
                         break
+                
+                time.sleep(0.1)  # Control frame rate
+            
+            # Auto refresh to continue the stream
+            if st.session_state.camera_active:
+                st.rerun()
 
-                    filtered_frame = filter.apply(frame)
-                    FRAME_WINDOW.image(cv2.cvtColor(filtered_frame, cv2.COLOR_BGR2RGB))
+        # Static camera capture
+        st.write("---")
+        st.write("📸 Or take a single photo:")
+        
+        camera_file = st.camera_input("Take a picture", key="camera_input")
 
-                    # Allow checkbox to update to stop streaming
-                    live_filter = st.checkbox("Start Live Cinematic Filter", value=True, key="live_filter_checkbox")
+        if camera_file is not None:
+            image = Image.open(camera_file)
+            image_np = np.array(image.convert("RGB"))
+            image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
 
-                    time.sleep(0.03)
-            except Exception as e:
-                st.error(f"Error during webcam streaming: {e}")
-            finally:
-                cap.release()
-                st.write("Webcam streaming stopped.")
+            result = filter.apply(image_bgr)
+            result_rgb = cv2.cvtColor(result, cv2.COLOR_BGR2RGB)
 
-        else:
-            camera_file = st.camera_input("Take a picture")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.header("Original Image")
+                st.image(image)
+            with col2:
+                st.header("Cinematic Filter Applied")
+                st.image(result_rgb)
 
-            if camera_file is not None:
-                image = Image.open(camera_file)
-                image_np = np.array(image.convert("RGB"))
-                image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
-
-                result = filter.apply(image_bgr)
-                result_rgb = cv2.cvtColor(result, cv2.COLOR_BGR2RGB)
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.header("Original Image")
-                    st.image(image)
-                with col2:
-                    st.header("Cinematic Filter Applied")
-                    st.image(result_rgb)
-
-                processed_img = cv2.imencode('.jpg', result)[1].tobytes()
-                st.download_button(
-                    label="Download Filtered Image",
-                    data=processed_img,
-                    file_name="cinematic_image.jpg",
-                    mime="image/jpeg"
-                )
+            processed_img = cv2.imencode('.jpg', result)[1].tobytes()
+            st.download_button(
+                label="Download Filtered Image",
+                data=processed_img,
+                file_name="cinematic_image.jpg",
+                mime="image/jpeg",
+                key="download_camera_image"
+            )
 
 
 if __name__ == "__main__":
