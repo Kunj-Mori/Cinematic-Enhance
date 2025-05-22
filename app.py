@@ -6,7 +6,6 @@ import tempfile
 import os
 import shutil
 import time
-from threading import Thread
 
 class CinematicFilter:
     def __init__(self):
@@ -127,31 +126,25 @@ class CinematicFilter:
 
 def process_video(uploaded_file, filter):
     try:
-        # Create a temporary directory
         temp_dir = tempfile.mkdtemp()
         input_path = os.path.join(temp_dir, "input_video.mp4")
         output_path = os.path.join(temp_dir, "output_video.mp4")
         
-        # Save uploaded file
         with open(input_path, 'wb') as f:
             f.write(uploaded_file.read())
         
-        # Process video
         cap = cv2.VideoCapture(input_path)
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        # Create video writer
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
         
-        # Progress tracking
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # Process frames
         frame_count = 0
         while cap.isOpened():
             ret, frame = cap.read()
@@ -161,65 +154,24 @@ def process_video(uploaded_file, filter):
             processed_frame = filter.apply(frame)
             out.write(processed_frame)
             
-            # Update progress
             frame_count += 1
             progress = int((frame_count / total_frames) * 100)
             progress_bar.progress(progress)
             status_text.text(f"Processing frame {frame_count} of {total_frames}")
         
-        # Release resources
         cap.release()
         out.release()
         
-        # Read the processed video for download
         with open(output_path, 'rb') as f:
             processed_video = f.read()
             
         return processed_video
         
     finally:
-        # Clean up temporary directory and files
         try:
             shutil.rmtree(temp_dir)
-        except Exception as e:
-            st.warning(f"Note: Temporary files will be cleaned up later.")
-
-def process_webcam(filter):
-    # Initialize webcam
-    cap = cv2.VideoCapture(0)
-    
-    # Check if webcam is opened successfully
-    if not cap.isOpened():
-        st.error("Unable to access webcam. Please check your camera connection.")
-        return
-
-    # Create placeholder for the webcam feed
-    frame_placeholder = st.empty()
-    stop_button = st.button('Stop Webcam', key='stop_webcam_process')
-    
-    try:
-        while cap.isOpened() and not stop_button:
-            ret, frame = cap.read()
-            if not ret:
-                st.error("Failed to grab frame from webcam")
-                break
-            
-            # Apply filter to frame
-            processed_frame = filter.apply(frame)
-            
-            # Convert BGR to RGB for display
-            display_frame = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
-            
-            # Display the frame
-            frame_placeholder.image(display_frame, channels="RGB", use_column_width=True)
-            
-            # Small delay to reduce CPU usage
-            time.sleep(0.033)  # Approximately 30 FPS
-            
-    except Exception as e:
-        st.error(f"Error during webcam processing: {str(e)}")
-    finally:
-        cap.release()
+        except Exception:
+            pass
 
 def main():
     st.set_page_config(page_title="Cinematic Image Filter", layout="wide")
@@ -227,17 +179,10 @@ def main():
     st.title("🎬 Cinematic Image Filter")
     st.write("Transform your images and videos with a cinematic look!")
 
-    # Initialize session state for webcam
-    if 'webcam_running' not in st.session_state:
-        st.session_state.webcam_running = False
-
-    # Initialize filter
     filter = CinematicFilter()
 
-    # Sidebar controls - show for all modes
     st.sidebar.title("Filter Parameters")
     
-    # Filter preset selection
     preset = st.sidebar.selectbox(
         "Select Filter Style",
         ["Custom"] + list(filter.presets.keys()),
@@ -246,13 +191,10 @@ def main():
     
     if preset != "Custom":
         filter.apply_preset(preset)
-        
-        # Show current filter parameters (read-only)
         st.sidebar.write("Current Filter Parameters:")
         for param, value in filter.params.items():
             st.sidebar.text(f"{param}: {value:.2f}")
     else:
-        # Custom controls
         new_params = {
             "contrast": st.sidebar.slider("Contrast", 0.5, 2.0, filter.params["contrast"], key='contrast_slider'),
             "brightness": st.sidebar.slider("Brightness", 0.5, 2.0, filter.params["brightness"], key='brightness_slider'),
@@ -263,29 +205,24 @@ def main():
         }
         filter.update_params(new_params)
 
-    # Mode selection
-    mode = st.radio("Select Mode", ["Image", "Video", "Webcam"], key='mode_selection')
+    mode = st.radio("Select Mode", ["Image", "Video", "Webcam Replacement"], key='mode_selection')
 
     if mode == "Image":
         uploaded_file = st.file_uploader("Choose an image...", type=['jpg', 'jpeg', 'png'], key='image_uploader')
         
         if uploaded_file is not None:
-            # Read image
             image = Image.open(uploaded_file)
             image = np.array(image)
             
-            # Convert to BGR for OpenCV processing
-            if len(image.shape) == 2:  # Grayscale
+            if len(image.shape) == 2:
                 image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-            elif image.shape[2] == 4:  # RGBA
+            elif image.shape[2] == 4:
                 image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
-            else:  # RGB
+            else:
                 image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
             
-            # Process image
             result = filter.apply(image)
             
-            # Display images
             col1, col2 = st.columns(2)
             with col1:
                 st.header("Original")
@@ -294,7 +231,6 @@ def main():
                 st.header("Processed")
                 st.image(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
             
-            # Save option
             if st.button("Save Processed Image", key='save_image_button'):
                 processed_img = cv2.imencode('.jpg', result)[1].tobytes()
                 st.download_button(
@@ -310,10 +246,8 @@ def main():
         
         if uploaded_file is not None:
             try:
-                # Process video in a separate function
                 processed_video = process_video(uploaded_file, filter)
                 
-                # Provide download button
                 st.download_button(
                     label="Download Processed Video",
                     data=processed_video,
@@ -321,29 +255,29 @@ def main():
                     mime="video/mp4",
                     key='download_video_button'
                 )
-                
             except Exception as e:
                 st.error(f"An error occurred while processing the video: {str(e)}")
 
-    elif mode == "Webcam":
-        st.write("Note: Webcam mode requires camera access.")
-        col1, col2 = st.columns(2)
+    else:  # Webcam Replacement mode
+        st.warning(
+            "⚠️ Webcam mode is not supported on deployed web apps due to browser and server restrictions. "
+            "Please upload a video file to simulate webcam input."
+        )
+        uploaded_file = st.file_uploader("Upload a video file...", type=['mp4', 'avi', 'mov'], key='webcam_replacement_uploader')
         
-        with col1:
-            if not st.session_state.webcam_running:
-                if st.button("Start Webcam", key='start_webcam_button'):
-                    st.session_state.webcam_running = True
-                    st.rerun()
-        
-        with col2:
-            if st.session_state.webcam_running:
-                if st.button("Stop Webcam", key='stop_webcam_button'):
-                    st.session_state.webcam_running = False
-                    st.rerun()
-
-        # Run webcam if it's active
-        if st.session_state.webcam_running:
-            process_webcam(filter)
+        if uploaded_file is not None:
+            try:
+                processed_video = process_video(uploaded_file, filter)
+                
+                st.download_button(
+                    label="Download Processed Video",
+                    data=processed_video,
+                    file_name="cinematic_video_from_upload.mp4",
+                    mime="video/mp4",
+                    key='download_webcam_replacement_button'
+                )
+            except Exception as e:
+                st.error(f"An error occurred while processing the video: {str(e)}")
 
 if __name__ == "__main__":
-    main() 
+    main()
