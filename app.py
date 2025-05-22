@@ -85,16 +85,16 @@ class CinematicFilter:
         tint_amount = self.params["tint"] / 100.0
         image = image.astype(float)
         image[:, :, 0] *= (1 + tint_amount)  # Red channel
-        image[:, :, 2] *= (1 - tint_amount/2)  # Blue channel
+        image[:, :, 2] *= (1 - tint_amount / 2)  # Blue channel
         return np.clip(image, 0, 255).astype(np.uint8)
 
     def apply_vignette(self, image):
         height, width = image.shape[:2]
         X_center = width / 2
         Y_center = height / 2
-        X, Y = np.meshgrid(np.linspace(0, width-1, width), np.linspace(0, height-1, height))
+        X, Y = np.meshgrid(np.linspace(0, width - 1, width), np.linspace(0, height - 1, height))
         dist = np.sqrt((X - X_center) ** 2 + (Y - Y_center) ** 2)
-        max_dist = np.sqrt((width/2) ** 2 + (height/2) ** 2)
+        max_dist = np.sqrt((width / 2) ** 2 + (height / 2) ** 2)
         dist = dist / max_dist
         vignette = 1 - (dist * (1 - self.params["vignette"]))
         vignette = np.dstack([vignette] * 3)
@@ -111,6 +111,7 @@ class CinematicFilter:
     def apply_preset(self, preset_name):
         if preset_name in self.presets:
             self.params = self.presets[preset_name].copy()
+
 
 def process_video(uploaded_file, filter):
     try:
@@ -160,6 +161,7 @@ def process_video(uploaded_file, filter):
             shutil.rmtree(temp_dir)
         except Exception:
             pass
+
 
 def main():
     st.set_page_config(page_title="Cinematic Image Filter", layout="wide")
@@ -245,31 +247,35 @@ def main():
     elif mode == "Webcam":
         st.write("📷 Use your device camera.")
 
-        live_filter = st.checkbox("Start Live Cinematic Filter")
+        live_filter = st.checkbox("Start Live Cinematic Filter", key="live_filter_checkbox")
 
         if live_filter:
             FRAME_WINDOW = st.image([])
 
             cap = cv2.VideoCapture(0)
             if not cap.isOpened():
-                st.error("Cannot open webcam")
+                st.error("⚠️ Cannot open webcam. Please make sure your camera is connected and not in use by another application.")
                 return
 
-            while live_filter:
-                ret, frame = cap.read()
-                if not ret:
-                    st.error("Failed to grab frame")
-                    break
+            try:
+                while live_filter:
+                    ret, frame = cap.read()
+                    if not ret:
+                        st.error("⚠️ Failed to grab frame from webcam.")
+                        break
 
-                filtered_frame = filter.apply(frame)
-                FRAME_WINDOW.image(cv2.cvtColor(filtered_frame, cv2.COLOR_BGR2RGB))
+                    filtered_frame = filter.apply(frame)
+                    FRAME_WINDOW.image(cv2.cvtColor(filtered_frame, cv2.COLOR_BGR2RGB))
 
-                live_filter = st.checkbox("Start Live Cinematic Filter", value=True)
+                    # Update checkbox state (so you can stop streaming)
+                    live_filter = st.checkbox("Start Live Cinematic Filter", value=True, key="live_filter_checkbox")
 
-                time.sleep(0.03)
-
-            cap.release()
-            st.write("Webcam stopped.")
+                    time.sleep(0.03)
+            except Exception as e:
+                st.error(f"Error during webcam streaming: {e}")
+            finally:
+                cap.release()
+                st.write("Webcam streaming stopped.")
 
         else:
             camera_file = st.camera_input("Take a picture")
