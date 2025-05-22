@@ -7,6 +7,7 @@ import os
 import shutil
 import time
 
+
 class CinematicFilter:
     def __init__(self):
         self.params = {
@@ -17,7 +18,7 @@ class CinematicFilter:
             "vignette": 0.75,
             "grain": 0.025
         }
-        
+
         self.presets = {
             "Classic Cinema": {
                 "contrast": 1.4,
@@ -62,28 +63,36 @@ class CinematicFilter:
         }
 
     def apply(self, image):
+        # Convert BGR (OpenCV) to RGB (PIL)
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(image_rgb)
-        
+
+        # Apply contrast
         enhancer = ImageEnhance.Contrast(pil_image)
         pil_image = enhancer.enhance(self.params["contrast"])
-        
+
+        # Apply brightness
         enhancer = ImageEnhance.Brightness(pil_image)
         pil_image = enhancer.enhance(self.params["brightness"])
-        
+
+        # Apply saturation
         enhancer = ImageEnhance.Color(pil_image)
         pil_image = enhancer.enhance(self.params["saturation"])
-        
+
         processed = np.array(pil_image)
+
+        # Apply tint, vignette, and grain effects
         processed = self.apply_tint(processed)
         processed = self.apply_vignette(processed)
         processed = self.add_grain(processed)
-        
+
+        # Convert back to BGR for OpenCV usage/display
         return cv2.cvtColor(processed, cv2.COLOR_RGB2BGR)
 
     def apply_tint(self, image):
         tint_amount = self.params["tint"] / 100.0
         image = image.astype(float)
+        # Boost red channel, slightly reduce blue channel for warm tint
         image[:, :, 0] *= (1 + tint_amount)  # Red channel
         image[:, :, 2] *= (1 - tint_amount / 2)  # Blue channel
         return np.clip(image, 0, 255).astype(np.uint8)
@@ -114,48 +123,48 @@ class CinematicFilter:
 
 
 def process_video(uploaded_file, filter):
+    temp_dir = tempfile.mkdtemp()
     try:
-        temp_dir = tempfile.mkdtemp()
         input_path = os.path.join(temp_dir, "input_video.mp4")
         output_path = os.path.join(temp_dir, "output_video.mp4")
-        
+
         with open(input_path, 'wb') as f:
             f.write(uploaded_file.read())
-        
+
         cap = cv2.VideoCapture(input_path)
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        
+
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-        
+
         progress_bar = st.progress(0)
         status_text = st.empty()
-        
+
         frame_count = 0
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
-            
+
             processed_frame = filter.apply(frame)
             out.write(processed_frame)
-            
+
             frame_count += 1
             progress = int((frame_count / total_frames) * 100)
             progress_bar.progress(progress)
             status_text.text(f"Processing frame {frame_count} of {total_frames}")
-        
+
         cap.release()
         out.release()
-        
+
         with open(output_path, 'rb') as f:
             processed_video = f.read()
-            
+
         return processed_video
-        
+
     finally:
         try:
             shutil.rmtree(temp_dir)
@@ -176,7 +185,7 @@ def main():
         ["Custom"] + list(filter.presets.keys()),
         key='filter_preset'
     )
-    
+
     if preset != "Custom":
         filter.apply_preset(preset)
         st.sidebar.write("Current Filter Parameters:")
@@ -197,7 +206,7 @@ def main():
 
     if mode == "Image":
         uploaded_file = st.file_uploader("Choose an image...", type=['jpg', 'jpeg', 'png'], key='image_uploader')
-        
+
         if uploaded_file is not None:
             image = Image.open(uploaded_file)
             image = np.array(image)
@@ -207,9 +216,9 @@ def main():
                 image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
             else:
                 image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-            
+
             result = filter.apply(image)
-            
+
             col1, col2 = st.columns(2)
             with col1:
                 st.header("Original")
@@ -217,7 +226,7 @@ def main():
             with col2:
                 st.header("Processed")
                 st.image(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
-            
+
             if st.button("Save Processed Image", key='save_image_button'):
                 processed_img = cv2.imencode('.jpg', result)[1].tobytes()
                 st.download_button(
@@ -230,7 +239,7 @@ def main():
 
     elif mode == "Video":
         uploaded_file = st.file_uploader("Choose a video...", type=['mp4', 'avi', 'mov'], key='video_uploader')
-        
+
         if uploaded_file is not None:
             try:
                 processed_video = process_video(uploaded_file, filter)
@@ -267,7 +276,7 @@ def main():
                     filtered_frame = filter.apply(frame)
                     FRAME_WINDOW.image(cv2.cvtColor(filtered_frame, cv2.COLOR_BGR2RGB))
 
-                    # Update checkbox state (so you can stop streaming)
+                    # Allow checkbox to update (stop live streaming)
                     live_filter = st.checkbox("Start Live Cinematic Filter", value=True, key="live_filter_checkbox")
 
                     time.sleep(0.03)
@@ -303,6 +312,7 @@ def main():
                     file_name="cinematic_image.jpg",
                     mime="image/jpeg"
                 )
+
 
 if __name__ == "__main__":
     main()
