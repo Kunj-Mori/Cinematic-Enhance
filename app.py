@@ -9,7 +9,6 @@ import time
 
 class CinematicFilter:
     def __init__(self):
-        # Default parameters
         self.params = {
             "contrast": 1.4,
             "brightness": 1.05,
@@ -19,7 +18,6 @@ class CinematicFilter:
             "grain": 0.025
         }
         
-        # Predefined filter presets
         self.presets = {
             "Classic Cinema": {
                 "contrast": 1.4,
@@ -64,11 +62,9 @@ class CinematicFilter:
         }
 
     def apply(self, image):
-        # Convert BGR to RGB for PIL
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(image_rgb)
         
-        # Apply basic enhancements
         enhancer = ImageEnhance.Contrast(pil_image)
         pil_image = enhancer.enhance(self.params["contrast"])
         
@@ -78,19 +74,11 @@ class CinematicFilter:
         enhancer = ImageEnhance.Color(pil_image)
         pil_image = enhancer.enhance(self.params["saturation"])
         
-        # Convert back to numpy array
         processed = np.array(pil_image)
-        
-        # Apply tint
         processed = self.apply_tint(processed)
-        
-        # Apply vignette
         processed = self.apply_vignette(processed)
-        
-        # Add grain
         processed = self.add_grain(processed)
         
-        # Convert back to BGR for OpenCV
         return cv2.cvtColor(processed, cv2.COLOR_RGB2BGR)
 
     def apply_tint(self, image):
@@ -126,31 +114,25 @@ class CinematicFilter:
 
 def process_video(uploaded_file, filter):
     try:
-        # Create a temporary directory
         temp_dir = tempfile.mkdtemp()
         input_path = os.path.join(temp_dir, "input_video.mp4")
         output_path = os.path.join(temp_dir, "output_video.mp4")
         
-        # Save uploaded file
         with open(input_path, 'wb') as f:
             f.write(uploaded_file.read())
         
-        # Process video
         cap = cv2.VideoCapture(input_path)
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        # Create video writer
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
         
-        # Progress tracking
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # Process frames
         frame_count = 0
         while cap.isOpened():
             ret, frame = cap.read()
@@ -160,42 +142,33 @@ def process_video(uploaded_file, filter):
             processed_frame = filter.apply(frame)
             out.write(processed_frame)
             
-            # Update progress
             frame_count += 1
             progress = int((frame_count / total_frames) * 100)
             progress_bar.progress(progress)
             status_text.text(f"Processing frame {frame_count} of {total_frames}")
         
-        # Release resources
         cap.release()
         out.release()
         
-        # Read the processed video for download
         with open(output_path, 'rb') as f:
             processed_video = f.read()
             
         return processed_video
         
     finally:
-        # Clean up temporary directory and files
         try:
             shutil.rmtree(temp_dir)
-        except Exception as e:
-            st.warning(f"Note: Temporary files will be cleaned up later.")
+        except Exception:
+            pass
 
 def main():
     st.set_page_config(page_title="Cinematic Image Filter", layout="wide")
-    
     st.title("🎬 Cinematic Image Filter")
     st.write("Transform your images and videos with a cinematic look!")
 
-    # Initialize filter
     filter = CinematicFilter()
 
-    # Sidebar controls - show for all modes
     st.sidebar.title("Filter Parameters")
-    
-    # Filter preset selection
     preset = st.sidebar.selectbox(
         "Select Filter Style",
         ["Custom"] + list(filter.presets.keys()),
@@ -204,13 +177,10 @@ def main():
     
     if preset != "Custom":
         filter.apply_preset(preset)
-        
-        # Show current filter parameters (read-only)
         st.sidebar.write("Current Filter Parameters:")
         for param, value in filter.params.items():
             st.sidebar.text(f"{param}: {value:.2f}")
     else:
-        # Custom controls
         new_params = {
             "contrast": st.sidebar.slider("Contrast", 0.5, 2.0, filter.params["contrast"], key='contrast_slider'),
             "brightness": st.sidebar.slider("Brightness", 0.5, 2.0, filter.params["brightness"], key='brightness_slider'),
@@ -221,29 +191,23 @@ def main():
         }
         filter.update_params(new_params)
 
-    # Mode selection
     mode = st.radio("Select Mode", ["Image", "Video", "Webcam"], key='mode_selection')
 
     if mode == "Image":
         uploaded_file = st.file_uploader("Choose an image...", type=['jpg', 'jpeg', 'png'], key='image_uploader')
         
         if uploaded_file is not None:
-            # Read image
             image = Image.open(uploaded_file)
             image = np.array(image)
-            
-            # Convert to BGR for OpenCV processing
-            if len(image.shape) == 2:  # Grayscale
+            if len(image.shape) == 2:
                 image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-            elif image.shape[2] == 4:  # RGBA
+            elif image.shape[2] == 4:
                 image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
-            else:  # RGB
+            else:
                 image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
             
-            # Process image
             result = filter.apply(image)
             
-            # Display images
             col1, col2 = st.columns(2)
             with col1:
                 st.header("Original")
@@ -252,7 +216,6 @@ def main():
                 st.header("Processed")
                 st.image(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
             
-            # Save option
             if st.button("Save Processed Image", key='save_image_button'):
                 processed_img = cv2.imencode('.jpg', result)[1].tobytes()
                 st.download_button(
@@ -268,10 +231,7 @@ def main():
         
         if uploaded_file is not None:
             try:
-                # Process video in a separate function
                 processed_video = process_video(uploaded_file, filter)
-                
-                # Provide download button
                 st.download_button(
                     label="Download Processed Video",
                     data=processed_video,
@@ -279,46 +239,64 @@ def main():
                     mime="video/mp4",
                     key='download_video_button'
                 )
-                
             except Exception as e:
                 st.error(f"An error occurred while processing the video: {str(e)}")
 
     elif mode == "Webcam":
-        st.write("📷 Use your device camera to capture an image.")
-        
-        camera_file = st.camera_input("Take a picture")
+        st.write("📷 Use your device camera.")
 
-        if camera_file is not None:
-            # Load image with PIL from bytes
-            image = Image.open(camera_file)
+        live_filter = st.checkbox("Start Live Cinematic Filter")
 
-            # Convert PIL to numpy array in BGR format (OpenCV)
-            image_np = np.array(image.convert("RGB"))
-            image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+        if live_filter:
+            FRAME_WINDOW = st.image([])
 
-            # Apply cinematic filter
-            result = filter.apply(image_bgr)
+            cap = cv2.VideoCapture(0)
+            if not cap.isOpened():
+                st.error("Cannot open webcam")
+                return
 
-            # Convert back to RGB for display
-            result_rgb = cv2.cvtColor(result, cv2.COLOR_BGR2RGB)
+            while live_filter:
+                ret, frame = cap.read()
+                if not ret:
+                    st.error("Failed to grab frame")
+                    break
 
-            # Show original and filtered images side by side
-            col1, col2 = st.columns(2)
-            with col1:
-                st.header("Original Image")
-                st.image(image)
-            with col2:
-                st.header("Cinematic Filter Applied")
-                st.image(result_rgb)
+                filtered_frame = filter.apply(frame)
+                FRAME_WINDOW.image(cv2.cvtColor(filtered_frame, cv2.COLOR_BGR2RGB))
 
-            # Download option
-            processed_img = cv2.imencode('.jpg', result)[1].tobytes()
-            st.download_button(
-                label="Download Filtered Image",
-                data=processed_img,
-                file_name="cinematic_image.jpg",
-                mime="image/jpeg"
-            )
+                live_filter = st.checkbox("Start Live Cinematic Filter", value=True)
+
+                time.sleep(0.03)
+
+            cap.release()
+            st.write("Webcam stopped.")
+
+        else:
+            camera_file = st.camera_input("Take a picture")
+
+            if camera_file is not None:
+                image = Image.open(camera_file)
+                image_np = np.array(image.convert("RGB"))
+                image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+
+                result = filter.apply(image_bgr)
+                result_rgb = cv2.cvtColor(result, cv2.COLOR_BGR2RGB)
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.header("Original Image")
+                    st.image(image)
+                with col2:
+                    st.header("Cinematic Filter Applied")
+                    st.image(result_rgb)
+
+                processed_img = cv2.imencode('.jpg', result)[1].tobytes()
+                st.download_button(
+                    label="Download Filtered Image",
+                    data=processed_img,
+                    file_name="cinematic_image.jpg",
+                    mime="image/jpeg"
+                )
 
 if __name__ == "__main__":
     main()
