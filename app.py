@@ -261,9 +261,18 @@ def main():
         if live_filter:
             FRAME_WINDOW = st.image([])
 
-            cap = cv2.VideoCapture(0)
-            if not cap.isOpened():
-                st.error("⚠️ Cannot open webcam. Please make sure your camera is connected and not in use by another application.")
+            # Try to find a working camera index
+            cap = None
+            for cam_index in range(3):
+                cap = cv2.VideoCapture(cam_index)
+                if cap.isOpened():
+                    st.write(f"Camera found at index {cam_index}")
+                    break
+                cap.release()
+                cap = None
+
+            if cap is None:
+                st.error("⚠️ No webcam found or camera is busy. Please connect a camera or close other apps using the webcam.")
                 return
 
             try:
