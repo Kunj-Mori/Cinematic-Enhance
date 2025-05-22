@@ -63,38 +63,31 @@ class CinematicFilter:
         }
 
     def apply(self, image):
-        # Convert BGR (OpenCV) to RGB (PIL)
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(image_rgb)
 
-        # Apply contrast
         enhancer = ImageEnhance.Contrast(pil_image)
         pil_image = enhancer.enhance(self.params["contrast"])
 
-        # Apply brightness
         enhancer = ImageEnhance.Brightness(pil_image)
         pil_image = enhancer.enhance(self.params["brightness"])
 
-        # Apply saturation
         enhancer = ImageEnhance.Color(pil_image)
         pil_image = enhancer.enhance(self.params["saturation"])
 
         processed = np.array(pil_image)
 
-        # Apply tint, vignette, and grain effects
         processed = self.apply_tint(processed)
         processed = self.apply_vignette(processed)
         processed = self.add_grain(processed)
 
-        # Convert back to BGR for OpenCV usage/display
         return cv2.cvtColor(processed, cv2.COLOR_RGB2BGR)
 
     def apply_tint(self, image):
         tint_amount = self.params["tint"] / 100.0
         image = image.astype(float)
-        # Boost red channel, slightly reduce blue channel for warm tint
-        image[:, :, 0] *= (1 + tint_amount)  # Red channel
-        image[:, :, 2] *= (1 - tint_amount / 2)  # Blue channel
+        image[:, :, 0] *= (1 + tint_amount)  # Red
+        image[:, :, 2] *= (1 - tint_amount / 2)  # Blue
         return np.clip(image, 0, 255).astype(np.uint8)
 
     def apply_vignette(self, image):
@@ -170,6 +163,26 @@ def process_video(uploaded_file, filter):
             shutil.rmtree(temp_dir)
         except Exception:
             pass
+
+
+def find_working_camera(max_index=5):
+    """
+    Try to find a working camera index by checking up to max_index.
+    Returns index if found, else None.
+    """
+    for idx in range(max_index):
+        # Use CAP_DSHOW on Windows for less warning; on Linux default is fine
+        if os.name == 'nt':
+            cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+        else:
+            cap = cv2.VideoCapture(idx)
+
+        if cap is not None and cap.isOpened():
+            cap.release()
+            return idx
+        if cap is not None:
+            cap.release()
+    return None
 
 
 def main():
@@ -261,19 +274,17 @@ def main():
         if live_filter:
             FRAME_WINDOW = st.image([])
 
-            # Try to find a working camera index
-            cap = None
-            for cam_index in range(3):
-                cap = cv2.VideoCapture(cam_index)
-                if cap.isOpened():
-                    st.write(f"Camera found at index {cam_index}")
-                    break
-                cap.release()
-                cap = None
+            cam_idx = find_working_camera()
 
-            if cap is None:
-                st.error("⚠️ No webcam found or camera is busy. Please connect a camera or close other apps using the webcam.")
+            if cam_idx is None:
+                st.error("⚠️ No accessible webcam found. Please connect a camera or close other apps using the webcam.")
                 return
+
+            # Open capture with the found index
+            if os.name == 'nt':
+                cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
+            else:
+                cap = cv2.VideoCapture(cam_idx)
 
             try:
                 while live_filter:
@@ -285,7 +296,7 @@ def main():
                     filtered_frame = filter.apply(frame)
                     FRAME_WINDOW.image(cv2.cvtColor(filtered_frame, cv2.COLOR_BGR2RGB))
 
-                    # Allow checkbox to update (stop live streaming)
+                    # Allow checkbox to update to stop streaming
                     live_filter = st.checkbox("Start Live Cinematic Filter", value=True, key="live_filter_checkbox")
 
                     time.sleep(0.03)
